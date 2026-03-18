@@ -3,6 +3,7 @@ import threading
 import re
 import os
 import platform
+import glob as _glob
 from typing import List, Optional
 
 # Regular expression to detect CDB prompts
@@ -35,6 +36,7 @@ class CDBSession:
         self,
         dump_path: Optional[str] = None,
         remote_connection: Optional[str] = None,
+        process_id: Optional[int] = None,
         cdb_path: Optional[str] = None,
         symbols_path: Optional[str] = None,
         initial_commands: Optional[List[str]] = None,
@@ -46,8 +48,9 @@ class CDBSession:
         Initialize a new CDB debugging session.
 
         Args:
-            dump_path: Path to the crash dump file (mutually exclusive with remote_connection)
+            dump_path: Path to the crash dump file
             remote_connection: Remote debugging connection string (e.g., "tcp:Port=5005,Server=192.168.0.100")
+            process_id: PID of the process to attach to
             cdb_path: Custom path to cdb.exe. If None, will try to find it automatically
             symbols_path: Custom symbols path. If None, uses default Windows symbols
             initial_commands: List of commands to run when CDB starts
@@ -60,17 +63,19 @@ class CDBSession:
             FileNotFoundError: If the dump file cannot be found
             ValueError: If invalid parameters are provided
         """
-        # Validate that exactly one of dump_path or remote_connection is provided
-        if not dump_path and not remote_connection:
-            raise ValueError("Either dump_path or remote_connection must be provided")
-        if dump_path and remote_connection:
-            raise ValueError("dump_path and remote_connection are mutually exclusive")
+        sources = [dump_path, remote_connection, process_id]
+        provided = sum(1 for s in sources if s is not None)
+        if provided == 0:
+            raise ValueError("One of dump_path, remote_connection, or process_id must be provided")
+        if provided > 1:
+            raise ValueError("dump_path, remote_connection, and process_id are mutually exclusive")
 
         if dump_path and not os.path.isfile(dump_path):
             raise FileNotFoundError(f"Dump file not found: {dump_path}")
 
         self.dump_path = dump_path
         self.remote_connection = remote_connection
+        self.process_id = process_id
         self.timeout = timeout
         self.verbose = verbose
 
@@ -87,6 +92,8 @@ class CDBSession:
             cmd_args.extend(["-z", self.dump_path])
         elif self.remote_connection:
             cmd_args.extend(["-remote", self.remote_connection])
+        elif self.process_id:
+            cmd_args.extend(["-p", str(self.process_id)])
 
         # Add symbols path if provided
         if symbols_path:
@@ -218,7 +225,11 @@ class CDBSession:
         try:
             if self.process and self.process.poll() is None:
                 try:
-                    if self.remote_connection:
+                    if self.process_id:
+                        # For attached processes, quit and detach to keep process alive
+                        self.process.stdin.write("qd\n")
+                        self.process.stdin.flush()
+                    elif self.remote_connection:
                         # For remote connections, send CTRL+B to detach
                         self.process.stdin.write("\x02")  # CTRL+B
                         self.process.stdin.flush()
@@ -245,6 +256,8 @@ class CDBSession:
             return os.path.abspath(self.dump_path)
         elif self.remote_connection:
             return f"remote:{self.remote_connection}"
+        elif self.process_id:
+            return f"pid:{self.process_id}"
         else:
             raise CDBError("Session has no valid identifier")
 

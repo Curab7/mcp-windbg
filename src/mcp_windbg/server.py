@@ -72,16 +72,32 @@ class RunWindbgCmdParams(BaseModel):
     """Parameters for executing a WinDbg command."""
     dump_path: Optional[str] = Field(default=None, description="Path to the Windows crash dump file")
     connection_string: Optional[str] = Field(default=None, description="Remote connection string (e.g., 'tcp:Port=5005,Server=192.168.0.100')")
+    process_id: Optional[int] = Field(default=None, description="PID of the attached process")
     command: str = Field(description="WinDbg command to execute")
 
     @model_validator(mode='after')
     def validate_connection_params(self):
-        """Validate that exactly one of dump_path or connection_string is provided."""
-        if not self.dump_path and not self.connection_string:
-            raise ValueError("Either dump_path or connection_string must be provided")
-        if self.dump_path and self.connection_string:
-            raise ValueError("dump_path and connection_string are mutually exclusive")
+        """Validate that exactly one of dump_path, connection_string, or process_id is provided."""
+        sources = [self.dump_path, self.connection_string, self.process_id]
+        provided = sum(1 for s in sources if s is not None)
+        if provided == 0:
+            raise ValueError("One of dump_path, connection_string, or process_id must be provided")
+        if provided > 1:
+            raise ValueError("dump_path, connection_string, and process_id are mutually exclusive")
         return self
+
+
+class AttachWindbgProcess(BaseModel):
+    """Parameters for attaching to a running process."""
+    process_id: int = Field(description="PID of the process to attach to")
+    include_stack_trace: bool = Field(default=False, description="Whether to include stack traces in the analysis")
+    include_modules: bool = Field(default=False, description="Whether to include loaded module information")
+    include_threads: bool = Field(default=False, description="Whether to include thread information")
+
+
+class DetachWindbgProcess(BaseModel):
+    """Parameters for detaching from a process."""
+    process_id: int = Field(description="PID of the process to detach from")
 
 
 class CloseWindbgDumpParams(BaseModel):
@@ -109,28 +125,34 @@ class ListWindbgDumpsParams(BaseModel):
 def get_or_create_session(
     dump_path: Optional[str] = None,
     connection_string: Optional[str] = None,
+    process_id: Optional[int] = None,
     cdb_path: Optional[str] = None,
     symbols_path: Optional[str] = None,
     timeout: int = 30,
     verbose: bool = False
 ) -> CDBSession:
     """Get an existing CDB session or create a new one."""
-    if not dump_path and not connection_string:
-        raise ValueError("Either dump_path or connection_string must be provided")
-    if dump_path and connection_string:
-        raise ValueError("dump_path and connection_string are mutually exclusive")
+    sources = [dump_path, connection_string, process_id]
+    provided = sum(1 for s in sources if s is not None)
+    if provided == 0:
+        raise ValueError("One of dump_path, connection_string, or process_id must be provided")
+    if provided > 1:
+        raise ValueError("dump_path, connection_string, and process_id are mutually exclusive")
 
     # Create session identifier
     if dump_path:
         session_id = os.path.abspath(dump_path)
-    else:
+    elif connection_string:
         session_id = f"remote:{connection_string}"
+    else:
+        session_id = f"pid:{process_id}"
 
     if session_id not in active_sessions or active_sessions[session_id] is None:
         try:
             session = CDBSession(
                 dump_path=dump_path,
                 remote_connection=connection_string,
+                process_id=process_id,
                 cdb_path=cdb_path,
                 symbols_path=symbols_path,
                 timeout=timeout,
@@ -147,18 +169,24 @@ def get_or_create_session(
     return active_sessions[session_id]
 
 
-def unload_session(dump_path: Optional[str] = None, connection_string: Optional[str] = None) -> bool:
+def unload_session(
+    dump_path: Optional[str] = None,
+    connection_string: Optional[str] = None,
+    process_id: Optional[int] = None,
+) -> bool:
     """Unload and clean up a CDB session."""
-    if not dump_path and not connection_string:
-        return False
-    if dump_path and connection_string:
+    sources = [dump_path, connection_string, process_id]
+    provided = sum(1 for s in sources if s is not None)
+    if provided != 1:
         return False
 
     # Create session identifier
     if dump_path:
         session_id = os.path.abspath(dump_path)
-    else:
+    elif connection_string:
         session_id = f"remote:{connection_string}"
+    else:
+        session_id = f"pid:{process_id}"
 
     if session_id in active_sessions and active_sessions[session_id] is not None:
         try:
@@ -316,6 +344,23 @@ def _create_server(
                 inputSchema=RunWindbgCmdParams.model_json_schema(),
             ),
             Tool(
+                name="attach_windbg_process",
+                description="""
+                Attach to a running process by PID using WinDbg/CDB.
+                The target process will be suspended upon attach. Use run_windbg_cmd with 'g' to resume.
+                Use detach_windbg_process when done to release the process without terminating it.
+                """,
+                inputSchema=AttachWindbgProcess.model_json_schema(),
+            ),
+            Tool(
+                name="detach_windbg_process",
+                description="""
+                Detach from an attached process and release resources.
+                The process will continue running after detach.
+                """,
+                inputSchema=DetachWindbgProcess.model_json_schema(),
+            ),
+            Tool(
                 name="close_windbg_dump",
                 description="""
                 Unload a crash dump and release resources.
@@ -439,10 +484,53 @@ def _create_server(
                     text="".join(results)
                 )]
 
+            elif name == "attach_windbg_process":
+                args = AttachWindbgProcess(**arguments)
+                session = get_or_create_session(
+                    process_id=args.process_id, cdb_path=cdb_path, symbols_path=symbols_path, timeout=timeout, verbose=verbose
+                )
+
+                results = []
+
+                target_info = session.send_command("|")
+                results.append("### Attached Process\n```\n" + "\n".join(target_info) + "\n```\n\n")
+
+                current_state = session.send_command("r")
+                results.append("### Current Registers\n```\n" + "\n".join(current_state) + "\n```\n\n")
+
+                if args.include_stack_trace:
+                    stack = session.send_command("kb")
+                    results.append("### Stack Trace\n```\n" + "\n".join(stack) + "\n```\n\n")
+
+                if args.include_modules:
+                    modules = session.send_command("lm")
+                    results.append("### Loaded Modules\n```\n" + "\n".join(modules) + "\n```\n\n")
+
+                if args.include_threads:
+                    threads = session.send_command("~")
+                    results.append("### Threads\n```\n" + "\n".join(threads) + "\n```\n\n")
+
+                return [TextContent(type="text", text="".join(results))]
+
+            elif name == "detach_windbg_process":
+                args = DetachWindbgProcess(**arguments)
+                success = unload_session(process_id=args.process_id)
+                if success:
+                    return [TextContent(
+                        type="text",
+                        text=f"Successfully detached from process {args.process_id}. The process continues running."
+                    )]
+                else:
+                    return [TextContent(
+                        type="text",
+                        text=f"No active session found for process {args.process_id}"
+                    )]
+
             elif name == "run_windbg_cmd":
                 args = RunWindbgCmdParams(**arguments)
                 session = get_or_create_session(
                     dump_path=args.dump_path, connection_string=args.connection_string,
+                    process_id=args.process_id,
                     cdb_path=cdb_path, symbols_path=symbols_path, timeout=timeout, verbose=verbose
                 )
                 output = session.send_command(args.command)
@@ -547,6 +635,10 @@ def _create_server(
     DUMP_TRIAGE_PROMPT_TITLE = "Crash Dump Triage Analysis"
     DUMP_TRIAGE_PROMPT_DESCRIPTION = "Comprehensive single crash dump analysis with detailed metadata extraction and structured reporting"
 
+    PROCESS_TRIAGE_PROMPT_NAME = "process-triage"
+    PROCESS_TRIAGE_PROMPT_TITLE = "Live Process Triage Analysis"
+    PROCESS_TRIAGE_PROMPT_DESCRIPTION = "Attach to a running process, collect diagnostic data (threads, locks, modules), and generate a structured analysis report"
+
     # Define available prompts for triage analysis
     @server.list_prompts()
     async def list_prompts() -> list[Prompt]:
@@ -559,6 +651,18 @@ def _create_server(
                     PromptArgument(
                         name="dump_path",
                         description="Path to the Windows crash dump file to analyze (optional - will prompt if not provided)",
+                        required=False,
+                    ),
+                ],
+            ),
+            Prompt(
+                name=PROCESS_TRIAGE_PROMPT_NAME,
+                title=PROCESS_TRIAGE_PROMPT_TITLE,
+                description=PROCESS_TRIAGE_PROMPT_DESCRIPTION,
+                arguments=[
+                    PromptArgument(
+                        name="process_id",
+                        description="PID of the running process to analyze (optional - will prompt if not provided)",
                         required=False,
                     ),
                 ],
@@ -588,6 +692,34 @@ def _create_server(
 
             return GetPromptResult(
                 description=DUMP_TRIAGE_PROMPT_DESCRIPTION,
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=prompt_text
+                        ),
+                    ),
+                ],
+            )
+
+        elif name == PROCESS_TRIAGE_PROMPT_NAME:
+            process_id = arguments.get("process_id", "")
+            try:
+                prompt_content = load_prompt("process-triage")
+            except FileNotFoundError as e:
+                raise McpError(ErrorData(
+                    code=INTERNAL_ERROR,
+                    message=f"Prompt file not found: {e}"
+                ))
+
+            if process_id:
+                prompt_text = f"**Process to analyze (PID):** {process_id}\n\n{prompt_content}"
+            else:
+                prompt_text = prompt_content
+
+            return GetPromptResult(
+                description=PROCESS_TRIAGE_PROMPT_DESCRIPTION,
                 messages=[
                     PromptMessage(
                         role="user",

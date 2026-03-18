@@ -1,16 +1,16 @@
 # MCP Server for WinDbg Crash Analysis
 
-A Model Context Protocol server that bridges AI models with WinDbg for crash dump analysis and remote debugging.
+A Model Context Protocol server that bridges AI models with WinDbg for crash dump analysis, remote debugging, and live process inspection.
 
 <!-- mcp-name: io.github.svnscha/mcp-windbg -->
 
 ## Overview
 
-This MCP server integrates with [CDB](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/opening-a-crash-dump-file-using-cdb) to enable AI models to analyze Windows crash dumps and connect to remote debugging sessions using WinDbg/CDB.
+This MCP server integrates with [CDB](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/opening-a-crash-dump-file-using-cdb) to enable AI models to analyze Windows crash dumps, connect to remote debugging sessions, and attach to live running processes using WinDbg/CDB.
 
 ## What is this?
 
-An AI-powered tool that bridges LLMs with WinDbg for crash dump analysis and live debugging. Execute debugger commands through natural language queries like *"Show me the call stack and explain this access violation"*.
+An AI-powered tool that bridges LLMs with WinDbg for crash dump analysis, live debugging, and live process inspection. Execute debugger commands through natural language queries like *"Show me the call stack and explain this access violation"* or *"Attach to process 1234 and check for deadlocks"*.
 
 ## What This is Not
 
@@ -20,6 +20,7 @@ Not a magical auto-fix solution. It's a Python wrapper around CDB that leverages
 
 - **Crash Dump Analysis**: Examine Windows crash dumps
 - **Live Debugging**: Connect to remote debugging targets
+- **Live Process Attach**: Attach to a running process by PID for real-time inspection
 - **Directory Analysis**: Process multiple dumps for patterns
 
 ## Quick Start
@@ -143,7 +144,16 @@ The beauty of MCP is that you write the server once, and it works everywhere. Ch
 | [`close_windbg_dump`](https://github.com/svnscha/mcp-windbg/wiki/Tools#close_windbg_dump) | Cleanup dump sessions | Resource management |
 | [`open_windbg_remote`](https://github.com/svnscha/mcp-windbg/wiki/Tools#open_windbg_remote) | Connect to remote debugging | Live debugging sessions |
 | [`close_windbg_remote`](https://github.com/svnscha/mcp-windbg/wiki/Tools#close_windbg_remote) | Cleanup remote sessions | Resource management |
+| [`attach_windbg_process`](https://github.com/svnscha/mcp-windbg/wiki/Tools#attach_windbg_process) | Attach to a running process by PID | Live process inspection and diagnostics |
+| [`detach_windbg_process`](https://github.com/svnscha/mcp-windbg/wiki/Tools#detach_windbg_process) | Detach from an attached process | Release process to resume execution |
 | [`run_windbg_cmd`](https://github.com/svnscha/mcp-windbg/wiki/Tools#run_windbg_cmd) | Execute WinDbg commands | Custom analysis and investigation |
+
+### Prompts
+
+| Prompt | Purpose | Use Case |
+|--------|---------|----------|
+| `dump-triage` | Crash dump triage analysis | Comprehensive single crash dump analysis with structured reporting |
+| `process-triage` | Live process triage analysis | Attach to a running process, collect diagnostics (threads, locks, modules), and generate a structured report |
 
 ## Documentation
 
@@ -174,6 +184,14 @@ The beauty of MCP is that you write the server once, and it works everywhere. Ch
 > "Check for timing issues in the thread pool with !runaway and !threads"
 
 > "Show me all threads with ~*k and identify which one is causing the hang"
+
+### Live Process Attach
+
+> "Attach to process 1234 and show me all thread stacks"
+
+> "Attach to PID 5678, check for deadlocks with !locks, then detach"
+
+> "Inspect the running notepad process and tell me what modules it has loaded"
 
 ## Blog
 
