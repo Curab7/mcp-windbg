@@ -22,6 +22,7 @@ Not a magical auto-fix solution. It's a Python wrapper around CDB that leverages
 - **Live Debugging**: Connect to remote debugging targets
 - **Live Process Attach**: Attach to a running process by PID for real-time inspection
 - **Directory Analysis**: Process multiple dumps for patterns
+- **UE5 / Game Engine Support**: Safe debugging patterns for large binaries with massive PDBs
 
 ## Quick Start
 
@@ -153,7 +154,7 @@ The beauty of MCP is that you write the server once, and it works everywhere. Ch
 | Prompt | Purpose | Use Case |
 |--------|---------|----------|
 | `dump-triage` | Crash dump triage analysis | Comprehensive single crash dump analysis with structured reporting |
-| `process-triage` | Live process triage analysis | Attach to a running process, collect diagnostics (threads, locks, modules), and generate a structured report |
+| `process-triage` | Live process triage analysis | Attach to a running process, collect diagnostics (threads, locks, modules), and generate a structured report. Includes **large binary safety rules** for UE5/game engines and UE5-specific debugging patterns |
 
 ## Documentation
 
@@ -193,12 +194,21 @@ The beauty of MCP is that you write the server once, and it works everywhere. Ch
 
 > "Inspect the running notepad process and tell me what modules it has loaded"
 
+### UE5 / Game Engine Debugging
+
+> "Attach to the UE5 game process and find GEngine/GWorld global pointers"
+
+> "Inspect the UE5 process — use safe commands only, the binary is 300MB+"
+
+> "Set a breakpoint on AMyActor::BeginPlay, hit it, and dump local variables"
+
 ## Blog
 
 Read about the development journey: [The Future of Crash Analysis: AI Meets WinDbg](https://svnscha.de/posts/ai-meets-windbg/)
 
 ### Links
 
+- [iWiki: MCP WinDbg 内部文档](https://iwiki.woa.com/p/4018845432)
 - [Reddit: I taught Copilot to analyze Windows Crash Dumps](https://www.reddit.com/r/programming/comments/1kes3wq/i_taught_copilot_to_analyze_windows_crash_dumps/)
 - [Hackernews: AI Meets WinDbg](https://news.ycombinator.com/item?id=43892096)
 
